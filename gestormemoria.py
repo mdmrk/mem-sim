@@ -1,7 +1,7 @@
 from tkinter import ttk
 from tkinter import *
+from copy import deepcopy
 import threading as t
-import datetime
 import random
 import time
 import enum
@@ -27,9 +27,9 @@ class AppException(Exception):
     def __init__(self, AppExceptionTypes, text=""):
         super().__init__()
         if AppExceptionTypes == AppExceptionTypes.WrongProcessInputFormat:
-            print("ERROR: " + str(text) + " tiene mal formato. Debería ser <process> <arrival> <req_mem> <duration>")
+            print("err -> " + str(text) + " tiene mal formato. Debería ser <process> <arrival> <req_mem> <duration>")
         elif AppExceptionTypes == AppExceptionTypes.TooFewProcesses:
-            print("ERROR: hay muy pocos procesos, se necesitan almenos 3")
+            print("err -> hay muy pocos procesos, se necesitan al menos 3")
 
 
 class MemorySpace():
@@ -53,6 +53,7 @@ class Process():
         self._leaves = None
         self._malloc = None
         self._rect = None
+        self._info = None
 
     def malloc(self, ms):
         self._malloc = ms
@@ -72,6 +73,12 @@ class Process():
     def get_rect(self):
         return self._rect
 
+    def set_info(self, info):
+        self._info = info
+
+    def get_info(self):
+        return self._info
+
     def get_req_mem(self):
         return self._req_mem
 
@@ -83,8 +90,8 @@ class Process():
 
 
 class Simulation():
-    def __init__(self, processes, algo_opt, step_sec, mem_view):
-        self.TOTAL_MEM = 2000
+    TOTAL_MEM = 5000
+    def __init__(self, processes, algo_opt, step_sec, mem_view, mem_view_info):
         self.instant = 1
         self.idle_processes = processes
         self.runn_processes = []
@@ -95,13 +102,12 @@ class Simulation():
         self.run_instantly = False
         self.step_info = ""
         self.mem_view = mem_view
+        self.mem_view_info = mem_view_info
 
     def get_instant(self):
         return self.instant
 
     def step(self):
-        while self.paused:
-            time.sleep(.2)
         self.step_info = f"{self.instant}t -"
         for runn_ps in self.runn_processes:
             if self.instant >= runn_ps.get_leaves():
@@ -117,40 +123,42 @@ class Simulation():
                         if mem_pos < runn_ps.get_malloc().get_y0():
                             free_mem.append([mem_pos, runn_ps.get_malloc().get_y0() - 1])
                         mem_pos = runn_ps.get_malloc().get_y1() + 1
-                    if mem_pos + idle_ps.get_req_mem() < self.TOTAL_MEM and idle_ps.get_malloc() == None:
-                        free_mem.append([mem_pos, mem_pos + idle_ps.get_req_mem()])
+                    if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
+                        free_mem.append([mem_pos, mem_pos + idle_ps.get_req_mem() - 1])
                     if len(free_mem) > 0:
                         best_mem_space = min(free_mem, key=lambda mem: mem[0])
 
-                        if best_mem_space[1] - best_mem_space[0] >= idle_ps.get_req_mem():
+                        if best_mem_space[1] - best_mem_space[0] >= idle_ps.get_req_mem() - 1:
                             self.idle_to_runn(idle_ps, best_mem_space[0], best_mem_space[1])
                 elif self.algo_opt == Algorithm.SIG_HUECO.value:
                     for runn_ps in self.runn_processes:
                         if mem_pos + idle_ps.get_req_mem() < runn_ps.get_malloc().get_y0():
-                            self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem())
+                            self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
                             break
                         mem_pos = runn_ps.get_malloc().get_y1() + 1
-                    if mem_pos + idle_ps.get_req_mem() < self.TOTAL_MEM and idle_ps.get_malloc() == None:
-                        self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem())
+                    if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
+                        self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
             self.runn_processes.sort(key=lambda x: x.get_malloc().get_y0())
         self.instant += 1
-        if not self.run_instantly:
-            time.sleep(self.step_sec)
 
     def get_step_info(self):
         return self.step_info
 
     def idle_to_runn(self, idle_ps, y0, y1):
+        color = fill = self.get_rand_color()
+
         idle_ps.malloc(MemorySpace(y0, y1))
         idle_ps.set_leaves(self.instant)
-        idle_ps.set_rect(self.draw_rect(y0, y1))
+        idle_ps.set_rect(self.draw_rect(y0, y1, color))
+        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_y0()}, {idle_ps.get_malloc().get_y1()})", y0, y1, color))
         self.runn_processes.append(idle_ps)
         self.idle_processes.remove(idle_ps)
-        self.step_info += f"> Puesto en marcha (Proceso {idle_ps.get_name()}) - Reservados {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_y0()}, {idle_ps.get_malloc().get_y1()})" + "\n"
+        self.step_info += f" [!] Ocupa memoria (Proceso {idle_ps.get_name()}) -> {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_y0()}, {idle_ps.get_malloc().get_y1()})" + "\n"
 
     def free_mem_runn_ps(self, runn_ps):
-        self.step_info += f"> Me voy (Proceso {runn_ps.get_name()}) - Quedan libres {runn_ps.get_req_mem()} ({runn_ps.get_malloc().get_y0()}, {runn_ps.get_malloc().get_y1()})" + "\n"
+        self.step_info += f" [!] Libera memoria (Proceso {runn_ps.get_name()}) -> {runn_ps.get_req_mem()} ({runn_ps.get_malloc().get_y0()}, {runn_ps.get_malloc().get_y1()})" + "\n"
         self.mem_view.delete(runn_ps.get_rect())
+        self.mem_view_info.delete(runn_ps.get_info())
         self.runn_processes.remove(runn_ps)
 
     def set_paused(self, paused):
@@ -168,12 +176,21 @@ class Simulation():
     def set_run_instantly(self):
         self.run_instantly = True
 
+    def get_run_instantly(self):
+        return self.run_instantly
+
+    def get_step_sec(self):
+        return self.step_sec
+
     def is_ended(self):
         return self.stopped or len(self.idle_processes) + len(self.runn_processes) == 0
 
-    def draw_rect(self, y0, y1):
+    def draw_rect(self, y0, y1, color):
         return self.mem_view.create_rectangle(
-            0, self.mem_view.winfo_screenmmheight() / self.TOTAL_MEM * y0, self.mem_view.winfo_screenwidth(), (self.mem_view.winfo_screenmmheight() / self.TOTAL_MEM) * y1, fill=self.get_rand_color())
+            0, self.mem_view.winfo_height() / self.TOTAL_MEM * y0, self.mem_view.winfo_width(), (self.mem_view.winfo_height() / self.TOTAL_MEM) * y1, fill=color, width=0)
+
+    def draw_info(self, text, y0, y1, color):
+        return self.mem_view_info.create_text(115, (self.mem_view_info.winfo_height() / self.TOTAL_MEM) * ((y1 + y0) / 2), text=text, fill=color, anchor=E)
 
     def get_rand_color(self):
         def r(): return random.randint(10, 220)
@@ -187,7 +204,6 @@ class AppManager(Tk):
 
         ## Control vars ##
         # Constants #
-        self.MAX_LOG_LENGTH = 10
         self.INPUT_FILENAME = "processes.txt"
 
         # Control #
@@ -223,7 +239,7 @@ class AppManager(Tk):
 
         # Data displays #
         self.mem_view = Canvas(bg="white", relief=SUNKEN, bd=2)
-        self.mem_view_info = Canvas(bg="white", relief=SUNKEN, bd=2, width=100)
+        self.mem_view_info = Canvas(bg="white", relief=SUNKEN, bd=2, width=120)
         self.log = Text(self, relief=SUNKEN, bd=2, state=DISABLED)
         self.processes_list = ttk.Treeview(self, columns=(
             "process", "arrival", "req_mem", "duration"))
@@ -264,13 +280,13 @@ class AppManager(Tk):
         self.columnconfigure(0, weight=1)
         self.frm_inputs.grid(row=2, column=0, sticky=NSEW)
         self.fmr_processes_list.grid(row=3, column=2, sticky=NSEW)
-        self.mem_view_info.grid(row=0, column=1, sticky=NS, rowspan=2)
         self.mem_view.grid(row=0, column=2, sticky=NSEW, rowspan=2)
+        self.mem_view_info.grid(row=0, column=1, sticky=NS, rowspan=2)
         self.log.grid(row=1, column=0, sticky=NSEW)
         self.processes_list.grid(row=2, column=2, sticky=NSEW)
 
         # Inputs grid #
-        self.frm_inputs.columnconfigure(0, weight=3)
+        self.frm_inputs.columnconfigure(0, weight=4)
         self.frm_inputs.columnconfigure(1, weight=1)
         self.frm_inputs.columnconfigure(2, weight=2)
         self.algo_sel_1.grid(row=0, column=1, sticky=W)
@@ -325,11 +341,12 @@ class AppManager(Tk):
             parent="", index="end", text="", values=ps_values)
 
     def gen_rand_ps(self):
-        amount = 50
+        amount = 100
 
         self.clr_processes_list()
         for i in range(0, amount):
-            self.add_ps_to_list(f"p{str(i)} {random.randint(1, amount * 2)} {random.randint(100, 1999)} {random.randint(1, amount)}")
+            self.add_ps_to_list(f"p{str(i)} {random.randint(1, amount * 2)} {random.randint(100, Simulation.TOTAL_MEM)} {random.randint(1, amount)}")
+        self.print(f"Se han cargado {amount} procesos aleatoriamente", "success")
         self.update_gui()
 
     def clr_log(self):
@@ -347,7 +364,7 @@ class AppManager(Tk):
 
     def print(self, text, tags=None, endl=True):
         self.log.config(state=NORMAL)
-        self.log.insert(END, "[" + datetime.datetime.now().strftime('%H:%M:%S') + "]~ " + str(text) + "\n" if endl else "", tags)
+        self.log.insert(END, " " + str(text) + "\n" if endl else "", tags)
         self.log.yview_moveto(1)
         self.log.config(state=DISABLED)
 
@@ -359,19 +376,24 @@ class AppManager(Tk):
         self.print(f"Simulación instantánea activada") if ckb.get() else self.print(f"Simulación instantánea desactivada")
 
     def handle_sim(self):
-        self.print(f"{len(self.processes)} procesos cargados")
         self.print("Algoritmo a usar: " + ("Mejor hueco" if self.algo_opt.get() == Algorithm.MEJ_HUECO.value else "Siguiente hueco"))
         self.print("Lanzando simulación...")
-        self.simulation = Simulation(self.processes.copy(), self.algo_opt.get(), self.sli_iter_sec.get(), self.mem_view)
+        self.simulation = Simulation(deepcopy(self.processes), self.algo_opt.get(), self.sli_iter_sec.get(), self.mem_view, self.mem_view_info)
 
         self.app_state = State.RUNNING
         if self.ckbtn_instant_sim_value.get():
             self.simulation.set_run_instantly()
 
-        while not self.simulation.is_ended():
+        while True:
+            while self.simulation.is_paused() and not self.simulation.is_ended():
+                time.sleep(.2)
+            if self.simulation.is_ended():
+                break
             self.update_gui()
             self.simulation.step()
             self.print(self.simulation.get_step_info())
+            if not self.simulation.get_run_instantly():
+                time.sleep(self.simulation.get_step_sec())
 
         self.print("La simulación se ha detenido", "warning") if self.simulation.is_stopped() else self.print("La simulación se ha completado exitosamente", "success")
         self.app_state = State.IDLE
@@ -381,14 +403,11 @@ class AppManager(Tk):
     def pause(self):
         if self.simulation.is_paused():
             self.state = State.RUNNING
-            self.update_gui()
             self.simulation.set_paused(False)
-            self.btn_pause.config(text="Pausar")
         else:
             self.state = State.PAUSED
-            self.update_gui()
             self.simulation.set_paused(True)
-            self.btn_pause.config(text="Reanudar")
+        self.update_gui()
 
     def stop(self):
         self.simulation.set_stopped(True)
@@ -398,16 +417,20 @@ class AppManager(Tk):
         if self.app_state == State.RUNNING:
             self.btn_start.config(state=DISABLED)
             self.btn_stop.config(state=NORMAL)
-            self.btn_pause.config(state=NORMAL)
+            self.btn_pause.config(state=NORMAL, text="Pausar")
             self.btn_read_ps_list.config(state=DISABLED)
+            self.btn_clr_processes_list.config(state=DISABLED)
+            self.btn_rand_processes_list.config(state=DISABLED)
             self.algo_sel_1.config(state=DISABLED)
             self.algo_sel_2.config(state=DISABLED)
             self.sli_iter_sec.config(state=DISABLED)
             self.ckbtn_instant_sim.config(state=DISABLED)
         elif self.app_state == State.IDLE:
             self.btn_stop.config(state=DISABLED)
-            self.btn_pause.config(state=DISABLED)
+            self.btn_pause.config(state=DISABLED, text="Pausar")
             self.btn_read_ps_list.config(state=NORMAL)
+            self.btn_clr_processes_list.config(state=NORMAL)
+            self.btn_rand_processes_list.config(state=NORMAL)
             self.algo_sel_1.config(state=NORMAL)
             self.algo_sel_2.config(state=NORMAL)
             self.sli_iter_sec.config(state=NORMAL)
@@ -416,12 +439,15 @@ class AppManager(Tk):
         elif self.app_state == State.PAUSED:
             self.btn_start.config(state=DISABLED)
             self.btn_stop.config(state=NORMAL)
-            self.btn_pause.config(state=NORMAL)
+            self.btn_pause.config(state=NORMAL, text="Reanudar")
             self.btn_read_ps_list.config(state=DISABLED)
+            self.btn_clr_processes_list.config(state=DISABLED)
+            self.btn_rand_processes_list.config(state=DISABLED)
             self.algo_sel_1.config(state=DISABLED)
             self.algo_sel_2.config(state=DISABLED)
             self.sli_iter_sec.config(state=NORMAL)
             self.ckbtn_instant_sim.config(state=DISABLED)
+
 
 
 def main():
