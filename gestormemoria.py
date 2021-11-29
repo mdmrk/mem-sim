@@ -33,15 +33,15 @@ class AppException(Exception):
 
 
 class MemorySpace():
-    def __init__(self, y0, y1):
-        self._y0 = y0
-        self._y1 = y1
+    def __init__(self, beg, end):
+        self._beg = beg
+        self._end = end
 
-    def get_y0(self):
-        return self._y0
+    def get_beg(self):
+        return self._beg
 
-    def get_y1(self):
-        return self._y1
+    def get_end(self):
+        return self._end
 
 
 class Process():
@@ -90,7 +90,7 @@ class Process():
 
 
 class Simulation():
-    TOTAL_MEM = 5000
+    TOTAL_MEM = 1000
     def __init__(self, processes, algo_opt, step_sec, mem_view, mem_view_info):
         self.instant = 1
         self.idle_processes = processes
@@ -120,25 +120,23 @@ class Simulation():
                     free_mem = []  # [[0, 123], [165, 254]...]
 
                     for runn_ps in self.runn_processes:
-                        if mem_pos < runn_ps.get_malloc().get_y0():
-                            free_mem.append([mem_pos, runn_ps.get_malloc().get_y0() - 1])
-                        mem_pos = runn_ps.get_malloc().get_y1() + 1
+                        if mem_pos < runn_ps.get_malloc().get_beg() and runn_ps.get_malloc().get_beg() - mem_pos >= idle_ps.get_req_mem():
+                            free_mem.append([mem_pos, runn_ps.get_malloc().get_beg() - 1])
+                        mem_pos = runn_ps.get_malloc().get_end() + 1
                     if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
                         free_mem.append([mem_pos, mem_pos + idle_ps.get_req_mem() - 1])
                     if len(free_mem) > 0:
-                        best_mem_space = min(free_mem, key=lambda mem: mem[0])
-
-                        if best_mem_space[1] - best_mem_space[0] >= idle_ps.get_req_mem() - 1:
-                            self.idle_to_runn(idle_ps, best_mem_space[0], best_mem_space[1])
+                        best_mem_space = min(free_mem, key=lambda mem: mem[1] - mem[0])
+                        self.idle_to_runn(idle_ps, best_mem_space[0], best_mem_space[0] + idle_ps.get_req_mem() - 1)
                 elif self.algo_opt == Algorithm.SIG_HUECO.value:
                     for runn_ps in self.runn_processes:
-                        if mem_pos + idle_ps.get_req_mem() < runn_ps.get_malloc().get_y0():
+                        if mem_pos + idle_ps.get_req_mem() < runn_ps.get_malloc().get_beg():
                             self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
                             break
-                        mem_pos = runn_ps.get_malloc().get_y1() + 1
+                        mem_pos = runn_ps.get_malloc().get_end() + 1
                     if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
                         self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
-            self.runn_processes.sort(key=lambda x: x.get_malloc().get_y0())
+            self.runn_processes.sort(key=lambda x: x.get_malloc().get_beg())
         self.instant += 1
 
     def get_step_info(self):
@@ -150,13 +148,13 @@ class Simulation():
         idle_ps.malloc(MemorySpace(y0, y1))
         idle_ps.set_leaves(self.instant)
         idle_ps.set_rect(self.draw_rect(y0, y1, color))
-        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_y0()}, {idle_ps.get_malloc().get_y1()})", y0, y1, color))
+        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})", y0, y1, color))
         self.runn_processes.append(idle_ps)
         self.idle_processes.remove(idle_ps)
-        self.step_info += f" [!] Ocupa memoria (Proceso {idle_ps.get_name()}) -> {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_y0()}, {idle_ps.get_malloc().get_y1()})" + "\n"
+        self.step_info += f" [!] Ocupa memoria (Proceso {idle_ps.get_name()}) -> {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})" + "\n"
 
     def free_mem_runn_ps(self, runn_ps):
-        self.step_info += f" [!] Libera memoria (Proceso {runn_ps.get_name()}) -> {runn_ps.get_req_mem()} ({runn_ps.get_malloc().get_y0()}, {runn_ps.get_malloc().get_y1()})" + "\n"
+        self.step_info += f" [!] Libera memoria (Proceso {runn_ps.get_name()}) -> {runn_ps.get_req_mem()} ({runn_ps.get_malloc().get_beg()}, {runn_ps.get_malloc().get_end()})" + "\n"
         self.mem_view.delete(runn_ps.get_rect())
         self.mem_view_info.delete(runn_ps.get_info())
         self.runn_processes.remove(runn_ps)
