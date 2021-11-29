@@ -142,13 +142,13 @@ class Simulation():
     def get_step_info(self):
         return self.step_info
 
-    def idle_to_runn(self, idle_ps, y0, y1):
+    def idle_to_runn(self, idle_ps, beg, end):
         color = fill = self.get_rand_color()
 
-        idle_ps.malloc(MemorySpace(y0, y1))
+        idle_ps.malloc(MemorySpace(beg, end))
         idle_ps.set_leaves(self.instant)
-        idle_ps.set_rect(self.draw_rect(y0, y1, color))
-        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})", y0, y1, color))
+        idle_ps.set_rect(self.draw_rect(beg, end, color))
+        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})", beg, end, color))
         self.runn_processes.append(idle_ps)
         self.idle_processes.remove(idle_ps)
         self.step_info += f" [!] Ocupa memoria (Proceso {idle_ps.get_name()}) -> {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})" + "\n"
@@ -183,12 +183,12 @@ class Simulation():
     def is_ended(self):
         return self.stopped or len(self.idle_processes) + len(self.runn_processes) == 0
 
-    def draw_rect(self, y0, y1, color):
+    def draw_rect(self, beg, end, color):
         return self.mem_view.create_rectangle(
-            0, self.mem_view.winfo_height() / self.TOTAL_MEM * y0, self.mem_view.winfo_width(), (self.mem_view.winfo_height() / self.TOTAL_MEM) * y1, fill=color, width=0)
+            0, self.mem_view.winfo_height() / self.TOTAL_MEM * beg, self.mem_view.winfo_width(), (self.mem_view.winfo_height() / self.TOTAL_MEM) * end, fill=color, width=0)
 
-    def draw_info(self, text, y0, y1, color):
-        return self.mem_view_info.create_text(115, (self.mem_view_info.winfo_height() / self.TOTAL_MEM) * ((y1 + y0) / 2), text=text, fill=color, anchor=E)
+    def draw_info(self, text, beg, end, color):
+        return self.mem_view_info.create_text(115, (self.mem_view_info.winfo_height() / self.TOTAL_MEM) * ((end + beg) / 2), text=text, fill=color, anchor=E)
 
     def get_rand_color(self):
         def r(): return random.randint(10, 220)
