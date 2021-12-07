@@ -1,0 +1,5 @@
+# Ejemplo de como introducir procesos. El espacio entre datos debe ser de mínimo un espacio en blanco.
+A              1                     300                  3
+B              2                 2000                 5
+C              3                  400                  4
+D              5                   150 5
