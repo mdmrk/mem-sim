@@ -142,7 +142,7 @@ class Simulation():
 
                 if self._algo_opt == Algorithm.MEJ_HUECO.value:
                     # Algo. Mejor hueco
-                    free_mem = []  # [[0, 123], [165, 254]...]
+                    free_mem = [] # [[0, 123], [165, 254]...]
 
                     for runn_ps in self._runn_processes:
                         if mem_pos < runn_ps.get_malloc().get_beg() and runn_ps.get_malloc().get_beg() - mem_pos >= idle_ps.get_req_mem():
@@ -448,9 +448,6 @@ class AppManager(Tk):
         self.log.insert(END, " " + str(text) + "\n" if endl else "", tags)
         self.log.yview_moveto(1)
         self.log.config(state=DISABLED)
-
-    def is_checked_ckb_instant_sim(self, ckb):
-        self.print(f"Simulación instantánea activada") if ckb.get() else self.print(f"Simulación instantánea desactivada")
 
     def run_sim(self):
         #
