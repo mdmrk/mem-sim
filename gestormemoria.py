@@ -6,7 +6,6 @@ from threading import Thread
 import random
 import time
 import math
-import sys
 import re
 
 
@@ -553,10 +552,11 @@ class AppManager(Tk):
                     time.sleep(self._simulation.get_step_sec())
                 self._simulation.inc_inst()
         except:
-            self.print("Error en la simulación")
+            self.print("Error en la simulación", "red")
+            self._simulation.set_sim_state(SimState.STOPPED)
             raise AppException(AppExceptionTypes.SIMULATION_ERROR)
         finally:
-            if not self._simulation.is_ended():
+            if self._simulation.is_stopped():
                 self.print("La simulación se ha detenido", "red")
             else:
                 self.print("La simulación se ha completado exitosamente", "green")
