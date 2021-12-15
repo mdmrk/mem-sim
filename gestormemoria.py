@@ -1,80 +1,70 @@
-from tkinter import ttk
 from tkinter import *
+from tkinter import ttk
+from enum import Enum
 from copy import deepcopy
-import threading as t
+from threading import Thread
 import random
 import time
-import enum
 import math
 import sys
 import re
 
 
-class State(enum.Enum):
+class SimState(Enum):
     RUNNING = 1
     IDLE = 2
     PAUSED = 3
+    STOPPED = 4
 
 
-class Algorithm(enum.Enum):
+class PrcsState(Enum):
+    WAITING = 1
+    RUNNING = 2
+    ENDED = 3
+
+
+class Algorithm(Enum):
     SIG_HUECO = 1
     MEJ_HUECO = 2
 
 
-class AppExceptionTypes(enum.Enum):
-    WrongProcessInputFormat = 1
-    TooFewProcesses = 2
-    InvalidMemoryAmount = 3
-    WrongDataType = 4
+class AppExceptionTypes(Enum):
+    WRONG_PROCESS_INPUT_FORMAT = 1
+    TOO_FEW_PROCESSES = 2
+    INVALID_REQUIRED_MEMORY_AMOUNT = 3
+    WRONG_DATA_TYPE = 4
+    SIMULATION_ERROR = 5
 
 
 class AppException(Exception):
-    def __init__(self, AppExceptionTypes, text=""):
+    def __init__(self, exc_type: AppExceptionTypes, text=""):
         super().__init__()
-        if AppExceptionTypes == AppExceptionTypes.WrongProcessInputFormat:
+        if exc_type == exc_type.WRONG_PROCESS_INPUT_FORMAT:
             print("err -> '" + str(text) + "' tiene mal formato. Debería ser <process> <arrival> <req_mem> <duration>")
-        elif AppExceptionTypes == AppExceptionTypes.TooFewProcesses:
-            print("err -> Hay muy pocos procesos, se necesitan al menos 3")
-        elif AppExceptionTypes == AppExceptionTypes.InvalidMemoryAmount:
+        elif exc_type == exc_type.TOO_FEW_PROCESSES:
+            print("err -> Hay muy pocos procesos")
+        elif exc_type == exc_type.INVALID_REQUIRED_MEMORY_AMOUNT:
             print(f"err -> La memoria requerida debe contenerse en (100, {Simulation.TOTAL_MEM}]")
-        elif AppExceptionTypes == AppExceptionTypes.WrongDataType:
+        elif exc_type == exc_type.WRONG_DATA_TYPE:
             print(f"err -> Se ha introducido un valor erróneo")
-
-
-class MemorySpace():
-    #
-    # Espacio de memoria ocupada
-    #
-    def __init__(self, beg, end):
-        self._beg = beg
-        self._end = end
-
-    def get_beg(self):
-        return self._beg
-
-    def get_end(self):
-        return self._end
-
-    def get_size(self):
-        return self._end - self._beg + 1
+        elif exc_type == exc_type.SIMULATION_ERROR:
+            print(f"err -> Error en la simulación")
 
 
 class Process():
     #
     # Representación de un proceso
     #
-    def __init__(self, name, arrival, req_mem, duration):
+    def __init__(self, name: str, arrival: int, req_mem: int, duration: int):
         self._name = name
         self._arrival = arrival
         self._req_mem = req_mem
         self._duration = duration
         self._leaves = None
-        self._malloc = None  # Memoria
-        self._rect = None
-        self._info = None
+        self._prcs_state = PrcsState.WAITING
 
-    def malloc(self, mem_space):
-        self._malloc = mem_space
+    def set_prcs_state(self, prcs_state: PrcsState):
+        self._prcs_state = prcs_state
 
     def get_arrival(self):
         return self._arrival
@@ -82,29 +72,118 @@ class Process():
     def get_leaves(self):
         return self._leaves
 
-    def set_leaves(self, instant):
-        self._leaves = instant + self._duration
-
-    def set_rect(self, rect):
-        self._rect = rect
-
-    def get_rect(self):
-        return self._rect
-
-    def set_info(self, info):
-        self._info = info
-
-    def get_info(self):
-        return self._info
+    def set_leaves(self, inst: int):
+        self._leaves = inst + self._duration
 
     def get_req_mem(self):
         return self._req_mem
 
-    def get_malloc(self):
-        return self._malloc
+    def is_waiting(self):
+        return self._prcs_state == PrcsState.WAITING
+
+    def is_running(self):
+        return self._prcs_state == PrcsState.RUNNING
+
+    def is_ended(self):
+        return self._prcs_state == PrcsState.ENDED
 
     def get_name(self):
         return self._name
+
+
+class Partition():
+    #
+    # Espacio en memoria
+    #
+    def __init__(self, beg: int, size: int):
+        self._beg = beg
+        self._size = size
+        self._prcs = None  # Una partición puede estar ocupada por un proceso
+
+    def get_beg(self):
+        return self._beg
+
+    def get_end(self):
+        return self._beg + self._size - 1
+
+    def get_size(self):
+        return self._size
+
+    def reduce(self, amt: int):
+        self._size -= amt
+        self._beg += amt
+
+    def expand(self, amt: int):
+        self._size += amt
+
+    def set_prcs(self, prcs: Process):
+        self._prcs = prcs
+
+    def get_prcs(self):
+        return self._prcs
+
+    def is_assigned(self):
+        return True if self._prcs else False
+
+
+class MemoryCanvasObj():
+    def __init__(self, part: Partition, shape, text):
+        self._part = part
+        self._shape = shape
+        self._text = text
+
+    def get_part(self):
+        return self._part
+
+    def get_shape(self):
+        return self._shape
+
+    def get_text(self):
+        return self._text
+
+
+class MemoryCanvas():
+    def __init__(self):
+        self._mem_canvas_shapes = Canvas(bg="white", relief=SUNKEN, bd=2)
+        self._mem_canvas_text = Canvas(bg="white", relief=SUNKEN, bd=2, width=120)
+        self._objects = []
+
+    def get_rand_color(self):
+        #
+        # Devuelve un color aleatorio en formato hex
+        #
+        def r(): return random.randint(10, 220)
+        return '#%02X%02X%02X' % (r(), r(), r())
+
+    def get_mem_canvas_shapes(self):
+        return self._mem_canvas_shapes
+
+    def get_mem_canvas_text(self):
+        return self._mem_canvas_text
+
+    def add_obj(self, part: Partition):
+        color = self.get_rand_color()
+
+        shape = self._mem_canvas_shapes.create_rectangle(0, self._mem_canvas_shapes.winfo_height() - (self._mem_canvas_shapes.winfo_height() / Simulation.TOTAL_MEM * part.get_beg()),
+                                                         self._mem_canvas_shapes.winfo_width(), self._mem_canvas_shapes.winfo_height() - (self._mem_canvas_shapes.winfo_height() / Simulation.TOTAL_MEM) * part.get_end(), fill=color, width=0)
+        text = self._mem_canvas_text.create_text(115, self._mem_canvas_shapes.winfo_height() - (self._mem_canvas_text.winfo_height() / Simulation.TOTAL_MEM) *
+                                                 ((part.get_end() + part.get_beg()) / 2), text=f"{part.get_prcs().get_name()} ({part.get_beg()}, {part.get_end()})", fill=color, anchor=E)
+        self._objects.append(MemoryCanvasObj(part, shape, text))
+
+    def rmv_obj(self, part: Partition):
+        obj: MemoryCanvasObj
+
+        for obj in self._objects:
+            if obj.get_part() == part:
+                self._mem_canvas_shapes.delete(obj.get_shape())
+                self._mem_canvas_text.delete(obj.get_text())
+                self._objects.remove(obj)
+                break
+
+    def clr(self):
+        self._mem_canvas_shapes.delete("all")
+        self._mem_canvas_text.delete("all")
+        self._objects = []
 
 
 class Simulation():
@@ -113,139 +192,132 @@ class Simulation():
     #
     TOTAL_MEM = 2000
 
-    def __init__(self, processes, algo_opt, step_sec, mem_view, mem_view_info):
-        self._instant = 1
-        self._idle_processes = processes
-        self._mem_view_info = mem_view_info
-        self._mem_view = mem_view
-        self._runn_processes = []
+    def __init__(self, processes: list = None, algo_opt: Algorithm = None, step_sec: int = 1, mem_canvas: MemoryCanvas = None):
+        self._inst = 1
+        self._memory = [Partition(0, self.TOTAL_MEM)]
+        self._mem_canvas = mem_canvas
+        self._processes = processes
         self._algo_opt = algo_opt
-        self._step_sec = 1/step_sec
-        self._paused = False
-        self._stopped = False
+        self._step_intvl = 1/step_sec
         self._step_info = ""
+        self._sim_state = SimState.IDLE
 
-    def get_instant(self):
-        return self._instant
+    def get_inst(self):
+        return self._inst
+
+    def set_sim_state(self, state: SimState):
+        self._sim_state = state
 
     def step(self):
         #
         # Calcula una iteración en la simulación
         #
-        self._step_info = f"{self._instant} -"
-        for runn_ps in self._runn_processes:
-            if self._instant >= runn_ps.get_leaves():
-                self.free_mem_runn_ps(runn_ps)
-        for idle_ps in self._idle_processes:
-            if idle_ps.get_arrival() <= self._instant:
-                mem_pos = 0
+        self._step_info = f"{self._inst} -"
+        prcs: Process
+        part: Partition
 
-                if self._algo_opt == Algorithm.MEJ_HUECO.value:
-                    # Algo. Mejor hueco
-                    free_mem = [] # [[0, 123], [165, 254]...]
+        for idx, part in enumerate(self._memory):
+            if part.is_assigned():
+                if part.get_prcs().get_leaves() <= self._inst:
+                    self.liberate(part, idx)
+        for prcs in self._processes:
+            if prcs.get_arrival() <= self._inst and prcs.is_waiting():
+                self.assign(prcs)
 
-                    for runn_ps in self._runn_processes:
-                        if mem_pos < runn_ps.get_malloc().get_beg() and runn_ps.get_malloc().get_beg() - mem_pos >= idle_ps.get_req_mem():
-                            free_mem.append([mem_pos, runn_ps.get_malloc().get_beg() - 1])
-                        mem_pos = runn_ps.get_malloc().get_end() + 1
-                    if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
-                        free_mem.append([mem_pos, mem_pos + idle_ps.get_req_mem() - 1])
-                    if len(free_mem) > 0:
-                        best_mem_space = min(free_mem, key=lambda mem: mem[1] - mem[0])
-                        self.idle_to_runn(idle_ps, best_mem_space[0], best_mem_space[0] + idle_ps.get_req_mem() - 1)
-                elif self._algo_opt == Algorithm.SIG_HUECO.value:
-                    # Algo. Siguiente hueco
-                    for runn_ps in self._runn_processes:
-                        if mem_pos + idle_ps.get_req_mem() < runn_ps.get_malloc().get_beg():
-                            self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
-                            break
-                        mem_pos = runn_ps.get_malloc().get_end() + 1
-                    if mem_pos + idle_ps.get_req_mem() - 1 < self.TOTAL_MEM and idle_ps.get_malloc() is None:
-                        self.idle_to_runn(idle_ps, mem_pos, mem_pos + idle_ps.get_req_mem() - 1)
-            self._runn_processes.sort(key=lambda x: x.get_malloc().get_beg())
+    def assign(self, prcs: Process):
+        part: Partition
+
+        if self._algo_opt == Algorithm.SIG_HUECO.value:
+            for idx, part in enumerate(self._memory):
+                if part.get_size() >= prcs.get_req_mem() and not part.is_assigned():
+                    new_part = Partition(part.get_beg(), prcs.get_req_mem())
+                    prcs.set_prcs_state(PrcsState.RUNNING)
+                    prcs.set_leaves(self._inst)
+                    new_part.set_prcs(prcs)
+                    part.reduce(prcs.get_req_mem())
+                    self._memory.insert(idx, new_part)
+                    self._mem_canvas.add_obj(new_part)
+                    self._step_info += f"\n     [!] Entra {prcs.get_name()} · Ocupa => {new_part.get_size()} ({new_part.get_beg()}, {new_part.get_end()})"
+                    break
+        elif self._algo_opt == Algorithm.MEJ_HUECO.value:
+            part = None
+
+            for idx, p in enumerate(self._memory):
+                if p.get_size() >= prcs.get_req_mem() and not p.is_assigned():
+                    part = p if part is None else p if p.get_size() < part.get_size() else part
+            if part:
+                idx = self._memory.index(part)
+                new_part = Partition(part.get_beg(), prcs.get_req_mem())
+                prcs.set_prcs_state(PrcsState.RUNNING)
+                prcs.set_leaves(self._inst)
+                new_part.set_prcs(prcs)
+                part.reduce(prcs.get_req_mem())
+                self._memory.insert(idx, new_part)
+                self._mem_canvas.add_obj(new_part)
+                self._step_info += f"\n     [!] Entra {prcs.get_name()} · Ocupa => {new_part.get_size()} ({new_part.get_beg()}, {new_part.get_end()})"
+
+    def liberate(self, part: Partition, idx: int()):
+        part: Partition
+        prev_part = self._memory[idx - 1] if idx - 1 >= 0 else None
+        if prev_part:
+            prev_part = prev_part if not prev_part.is_assigned() else None
+        next_part = self._memory[idx + 1] if idx + 1 < len(self._memory) else None
+        if next_part:
+            next_part = next_part if not next_part.is_assigned() else None
+
+        self._step_info += f"\n     [!] Sale {part.get_prcs().get_name()} · Libera => {part.get_size()} ({part.get_beg()}, {part.get_end()})"
+        self._processes.remove(part.get_prcs())
+        part.get_prcs().set_prcs_state(PrcsState.ENDED)
+        self._mem_canvas.rmv_obj(part)
+        part.set_prcs(None)
+
+        if prev_part and next_part:
+            prev_part.expand(part.get_size() + next_part.get_size())
+            self._memory.remove(next_part)
+            self._memory.remove(part)
+        elif prev_part:
+            prev_part.expand(part.get_size())
+            self._memory.remove(part)
+        elif next_part:
+            part.expand(next_part.get_size())
+            self._memory.remove(next_part)
+        else:
+            pass
+
+    def get_inst_export(self):
+        step = ""
+        part: Partition
+
+        for part in self._memory:
+            step += f"{self._inst} [{part.get_prcs().get_name() if part.is_assigned() else 'VACÍO'} {part.get_beg()}, {part.get_size()}]{' ' if self._memory[len(self._memory) - 1] != part else ''}"
+        return step
 
     def get_step_info(self):
         return self._step_info
 
-    def get_step_export(self):
-        #
-        # Devolver una cadena con los bloques ocupados y libres de memoria en este instante
-        #
-        mem_pos = 0
-        line = ""
-
-        line += f"{self._instant} "
-        for runn_ps in self._runn_processes:
-            if mem_pos < runn_ps.get_malloc().get_beg():
-                line += f"[{mem_pos} hueco {runn_ps.get_malloc().get_beg() - 1}] "
-            line += f"[{runn_ps.get_malloc().get_beg()} {runn_ps.get_name()} {runn_ps.get_malloc().get_size()}] "
-            mem_pos = runn_ps.get_malloc().get_end() + 1
-        if mem_pos < self.TOTAL_MEM:
-            line += f"[{mem_pos} hueco {self.TOTAL_MEM - mem_pos}]"
-        return line + "\n"
-
-    def idle_to_runn(self, idle_ps, beg, end):
-        #
-        # Asignar memoria a un proceso y ponerlo en el array de los que se están ejecutando
-        #
-        color = self.get_rand_color()
-
-        idle_ps.malloc(MemorySpace(beg, end))
-        idle_ps.set_leaves(self._instant)
-        idle_ps.set_rect(self.draw_rect(beg, end, color))
-        idle_ps.set_info(self.draw_info(f"{idle_ps.get_name()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})", beg, end, color))
-        self._runn_processes.append(idle_ps)
-        self._idle_processes.remove(idle_ps)
-        self._step_info += f" [!] Ocupa memoria (Proceso {idle_ps.get_name()}) -> {idle_ps.get_req_mem()} ({idle_ps.get_malloc().get_beg()}, {idle_ps.get_malloc().get_end()})" + "\n"
-
-    def free_mem_runn_ps(self, runn_ps):
-        #
-        # Libera la memoria de un proceso
-        #
-        self._step_info += f" [!] Libera memoria (Proceso {runn_ps.get_name()}) -> {runn_ps.get_req_mem()} ({runn_ps.get_malloc().get_beg()}, {runn_ps.get_malloc().get_end()})" + "\n"
-        self._mem_view.delete(runn_ps.get_rect())
-        self._mem_view_info.delete(runn_ps.get_info())
-        self._runn_processes.remove(runn_ps)
-
-    def set_paused(self, paused):
-        self._paused = paused
-
     def is_paused(self):
-        return self._paused
-
-    def set_stopped(self, stopped):
-        self._stopped = stopped
+        return self._sim_state == SimState.PAUSED
 
     def is_stopped(self):
-        return self._stopped
-
-    def get_step_sec(self):
-        return self._step_sec
-
-    def inc_instant(self):
-        self._instant += 1
+        return self._sim_state == SimState.STOPPED
 
     def is_ended(self):
-        return self._stopped or len(self._idle_processes) + len(self._runn_processes) == 0
+        return self._sim_state == SimState.STOPPED or not len(self._processes)
 
-    def draw_rect(self, beg, end, color):
-        #
-        # Renderiza un rectángulo simulando un espacio en memoria
-        #
-        return self._mem_view.create_rectangle(0, self._mem_view.winfo_height() - (self._mem_view.winfo_height() / self.TOTAL_MEM * beg), self._mem_view.winfo_width(), self._mem_view.winfo_height() - (self._mem_view.winfo_height() / self.TOTAL_MEM) * end, fill=color, width=0)
+    def is_idle(self):
+        return self._sim_state == SimState.IDLE
 
-    def draw_info(self, text, beg, end, color):
-        #
-        # Indica mediante texto el proceso e intervalo de memoria por cada espacio reservado
-        #
-        return self._mem_view_info.create_text(115, self._mem_view.winfo_height() - (self._mem_view_info.winfo_height() / self.TOTAL_MEM) * ((end + beg) / 2), text=text, fill=color, anchor=E)
+    def is_running(self):
+        return self._sim_state == SimState.RUNNING
 
-    def get_rand_color(self):
-        #
-        # Devuelve un color aleatorio en formato hex
-        #
-        def r(): return random.randint(10, 220)
-        return '#%02X%02X%02X' % (r(), r(), r())
+    def get_step_sec(self):
+        return self._step_intvl
+
+    def clr_mem_canvas(self):
+        self._mem_canvas.clr()
+
+    def inc_inst(self):
+        self._inst += 1
 
 
 class AppManager(Tk):
@@ -262,201 +334,197 @@ class AppManager(Tk):
         ## Control vars ##
         # Constants #
         self.INPUT_FILENAME = "procesos.txt"
-        self.MIN_PROCESSES_AMOUNT = 6
+        self.MIN_PROCESSES_AMOUNT = 3
+        self.MIN_MEMORY_VALUE = 100
 
         # Control #
         self._processes = []
-        self._app_state = State.IDLE
         self._algo_opt = IntVar()
-        self.simulation = None
-        self._sim_handl_thread = None
+        self._simulation = Simulation()
         self._ckbtn_instant_sim_value = BooleanVar()
         self._ckbtn_export_value = BooleanVar()
 
         ## Widgets (UI) ##
         # Layout #
-        self.frm_main = Frame(self)
-        self.frm_inputs = Frame(self)
-        self.fmr_processes_list = Frame(self)
+        self._frm_main = Frame(self)
+        self._frm_inputs = Frame(self)
+        self._frm_prcs_list = Frame(self)
 
         # Buttons, textboxes, options and selectors #
-        self.algo_sel_1 = Radiobutton(self.frm_inputs, text="Siguiente hueco", var=self._algo_opt, value=Algorithm.SIG_HUECO.value)
-        self.algo_sel_2 = Radiobutton(self.frm_inputs, text="Mejor hueco", var=self._algo_opt, value=Algorithm.MEJ_HUECO.value)
-        self.btn_quit = Button(self.frm_inputs, text="Salir", command=self.destroy)
-        self.btn_start = Button(self.frm_inputs, text="Iniciar", command=self.run_sim)
-        self.btn_pause = Button(self.frm_inputs, text="Pausar", command=self.pause)
-        self.btn_stop = Button(self.frm_inputs, text="Detener", command=self.stop)
-        self.btn_clr_log = Button(self.frm_inputs, text="Limpiar", command=self.clr_log)
-        self.btn_clr_processes_list = Button(self.fmr_processes_list, text="Vaciar", command=self.clr_processes_list)
-        self.btn_rand_processes_list = Button(self.fmr_processes_list, text="Aleatorio", command=self.gen_rand_ps)
-        self.btn_read_processes_list = Button(self.fmr_processes_list, text="Importar procesos", command=self.read_ps_from_fl)
-        self.sli_iter_sec = Scale(self.frm_inputs, label="Instantes/seg", from_=1, to=10, orient=HORIZONTAL)
-        self.sli_processes_amount = Scale(self.fmr_processes_list, label="Núm. procesos", from_=self.MIN_PROCESSES_AMOUNT, to=500, sliderlength=10, orient=HORIZONTAL)
-        self.ckbtn_instant_sim = Checkbutton(self.frm_inputs, text="Simulación rápida", variable=self._ckbtn_instant_sim_value, onvalue=True, offvalue=False)
-        self.ckbtn_export = Checkbutton(self.frm_inputs, text="Exportar al acabar", variable=self._ckbtn_export_value, onvalue=True, offvalue=False)
+        self._algo_sel_1 = Radiobutton(self._frm_inputs, text="Siguiente hueco", var=self._algo_opt, value=Algorithm.SIG_HUECO.value)
+        self._algo_sel_2 = Radiobutton(self._frm_inputs, text="Mejor hueco", var=self._algo_opt, value=Algorithm.MEJ_HUECO.value)
+        self._btn_quit = Button(self._frm_inputs, text="Salir", command=self.destroy)
+        self._btn_start = Button(self._frm_inputs, text="Iniciar", command=self.run_sim)
+        self._btn_pause = Button(self._frm_inputs, text="Pausar", command=self.pause_sim)
+        self._btn_stop = Button(self._frm_inputs, text="Detener", command=self.stop_sim)
+        self._btn_clr_log = Button(self._frm_inputs, text="Limpiar", command=self.clr_log)
+        self._btn_clr_prcs_list = Button(self._frm_prcs_list, text="Vaciar", command=self.clr_prcs_list)
+        self._btn_rand_prcs_list = Button(self._frm_prcs_list, text="Aleatorio", command=self.make_rand_prcs)
+        self._btn_read_prcs_list = Button(self._frm_prcs_list, text="Importar procesos", command=self.read_prcs_from_fl)
+        self._sli_iter_sec = Scale(self._frm_inputs, label="Instantes/seg", from_=1, to=10, orient=HORIZONTAL)
+        self._sli_prcs_amount = Scale(self._frm_prcs_list, label="Núm. procesos", from_=self.MIN_PROCESSES_AMOUNT, to=500, sliderlength=10, orient=HORIZONTAL)
+        self._ckbtn_instant_sim = Checkbutton(self._frm_inputs, text="Simulación rápida", variable=self._ckbtn_instant_sim_value, onvalue=True, offvalue=False)
+        self._ckbtn_export = Checkbutton(self._frm_inputs, text="Exportar al acabar", variable=self._ckbtn_export_value, onvalue=True, offvalue=False)
 
         # Data displays #
-        self.mem_view = Canvas(bg="white", relief=SUNKEN, bd=2)
-        self.mem_view_info = Canvas(bg="white", relief=SUNKEN, bd=2, width=120)
-        self.log = Text(self, relief=SUNKEN, bd=2, state=DISABLED)
-        self.processes_list = ttk.Treeview(self, columns=("process", "arrival", "req_mem", "duration"))
+        self._mem_canvas = MemoryCanvas()
+        self._log = Text(self, relief=SUNKEN, bd=2, state=DISABLED)
+        self._prcs_list = ttk.Treeview(self, columns=("process", "arrival", "req_mem", "duration"))
 
-        self.initUI()
+        self.init_ui()
 
-    def initUI(self):
+    def init_ui(self):
         #
         # Inicializa parámetros de la interfaz
         #
-        self.algo_sel_1.select()
+        self._algo_sel_1.select()
         ttk.Style(self).configure("Treeview", rowheight=15)
 
         # Table #
-        self.processes_list.column("#0", width=0, stretch=NO)
-        self.processes_list.column("process", anchor=CENTER, stretch=YES, width=90)
-        self.processes_list.column("arrival", anchor=CENTER, stretch=YES, width=90)
-        self.processes_list.column("req_mem", anchor=CENTER, stretch=YES, width=100)
-        self.processes_list.column("duration", anchor=CENTER, stretch=YES, width=90)
-        self.processes_list.heading("#0", text="", anchor=CENTER)
-        self.processes_list.heading("process", anchor=CENTER, text="Proceso")
-        self.processes_list.heading("arrival", anchor=CENTER, text="Llegada")
-        self.processes_list.heading("req_mem", anchor=CENTER, text="Memoria req.")
-        self.processes_list.heading("duration", anchor=CENTER, text="Duración")
+        self._prcs_list.column("#0", width=0, stretch=NO)
+        self._prcs_list.column("process", anchor=CENTER, stretch=YES, width=90)
+        self._prcs_list.column("arrival", anchor=CENTER, stretch=YES, width=90)
+        self._prcs_list.column("req_mem", anchor=CENTER, stretch=YES, width=100)
+        self._prcs_list.column("duration", anchor=CENTER, stretch=YES, width=90)
+        self._prcs_list.heading("#0", text="", anchor=CENTER)
+        self._prcs_list.heading("process", anchor=CENTER, text="Proceso")
+        self._prcs_list.heading("arrival", anchor=CENTER, text="Llegada")
+        self._prcs_list.heading("req_mem", anchor=CENTER, text="Memoria req.")
+        self._prcs_list.heading("duration", anchor=CENTER, text="Duración")
 
-        self.btn_start.config(state=DISABLED)
-        self.btn_pause.config(state=DISABLED)
-        self.btn_stop.config(state=DISABLED)
+        self._btn_start.config(state=DISABLED)
+        self._btn_pause.config(state=DISABLED)
+        self._btn_stop.config(state=DISABLED)
 
-        self.log.tag_configure("warning", foreground="red")
-        self.log.tag_configure("success", foreground="green")
+        self._log.tag_configure("red", foreground="red")
+        self._log.tag_configure("green", foreground="green")
 
-        self.sli_processes_amount.set(50)
+        self._sli_prcs_amount.set(30)
 
         ## Layout ##
         # Main grid #
-        self.frm_main.grid()
         self.columnconfigure(0, weight=1)
-        self.frm_inputs.grid(row=2, column=0, sticky=NSEW)
-        self.fmr_processes_list.grid(row=3, column=2, sticky=NSEW)
-        self.mem_view.grid(row=0, column=2, sticky=NSEW, rowspan=2)
-        self.mem_view_info.grid(row=0, column=1, sticky=NS, rowspan=2)
-        self.log.grid(row=1, column=0, sticky=NSEW)
-        self.processes_list.grid(row=2, column=2, sticky=NSEW)
+        self._frm_inputs.grid(row=2, column=0, sticky=NSEW)
+        self._frm_prcs_list.grid(row=3, column=2, sticky=NSEW)
+        self._mem_canvas.get_mem_canvas_shapes().grid(row=0, column=2, sticky=NSEW, rowspan=2)
+        self._mem_canvas.get_mem_canvas_text().grid(row=0, column=1, sticky=NS, rowspan=2)
+        self._log.grid(row=1, column=0, sticky=NSEW)
+        self._prcs_list.grid(row=2, column=2, sticky=NSEW)
 
         # Inputs grid #
-        self.frm_inputs.columnconfigure(0, minsize=120)
-        self.frm_inputs.columnconfigure(3, weight=1)
-        self.algo_sel_1.grid(row=0, column=1, sticky=W)
-        self.algo_sel_2.grid(row=1, column=1, sticky=W)
-        self.btn_start.grid(row=0, column=0, sticky=NSEW)
-        self.btn_pause.grid(row=1, column=0, sticky=NSEW)
-        self.btn_stop.grid(row=2, column=0, sticky=NSEW)
-        self.btn_quit.grid(row=3, column=0, sticky=NSEW)
-        self.btn_clr_log.grid(row=0, column=4, sticky=NE)
-        self.sli_iter_sec.grid(row=2, column=1, sticky=W, rowspan=2)
-        self.ckbtn_instant_sim.grid(row=2, column=2, sticky=W, columnspan=1)
-        self.ckbtn_export.grid(row=3, column=2, sticky=W)
+        self._frm_inputs.columnconfigure(0, minsize=120)
+        self._frm_inputs.columnconfigure(3, weight=1)
+        self._algo_sel_1.grid(row=0, column=1, sticky=W)
+        self._algo_sel_2.grid(row=1, column=1, sticky=W)
+        self._btn_start.grid(row=0, column=0, sticky=NSEW)
+        self._btn_pause.grid(row=1, column=0, sticky=NSEW)
+        self._btn_stop.grid(row=2, column=0, sticky=NSEW)
+        self._btn_quit.grid(row=3, column=0, sticky=NSEW)
+        self._btn_clr_log.grid(row=0, column=4, sticky=NE)
+        self._sli_iter_sec.grid(row=2, column=1, sticky=W, rowspan=2)
+        self._ckbtn_instant_sim.grid(row=2, column=2, sticky=W, columnspan=1)
+        self._ckbtn_export.grid(row=3, column=2, sticky=W)
 
         # Processes list grid #
-        self.fmr_processes_list.columnconfigure(1, weight=3)
-        self.fmr_processes_list.columnconfigure(2, weight=3)
-        self.fmr_processes_list.columnconfigure(0, weight=1)
-        self.btn_read_processes_list.grid(row=0, column=2, sticky=NSEW)
-        self.btn_clr_processes_list.grid(row=0, column=0, sticky=NSEW)
-        self.btn_rand_processes_list.grid(row=0, column=1, sticky=NSEW)
-        self.sli_processes_amount.grid(row=1, column=1, sticky=N)
+        self._frm_prcs_list.columnconfigure(1, weight=3)
+        self._frm_prcs_list.columnconfigure(2, weight=3)
+        self._frm_prcs_list.columnconfigure(0, weight=1)
+        self._btn_read_prcs_list.grid(row=0, column=2, sticky=NSEW)
+        self._btn_clr_prcs_list.grid(row=0, column=0, sticky=NSEW)
+        self._btn_rand_prcs_list.grid(row=0, column=1, sticky=NSEW)
+        self._sli_prcs_amount.grid(row=1, column=1, sticky=N)
 
-    def read_ps_from_fl(self):
+    def read_prcs_from_fl(self):
         #
         # Lee el archivo de texto para añadir los procesos
         #
-        fl = open(self.INPUT_FILENAME, "r")
+        prcs_fl = open(self.INPUT_FILENAME, "r")
 
-        self.clr_processes_list()
+        self.clr_prcs_list()
         while True:
-            ln = fl.readline()
-            if not ln:
+            prcs = prcs_fl.readline()
+            if not prcs:
                 break
-            if ln.startswith("#"):
+            if prcs.startswith("#"):
                 continue
             try:
-                self.add_ps_to_list(ln.strip())
+                self.add_prcs(prcs.strip())
             except:
-                self.clr_processes_list()
+                self.clr_prcs_list()
                 return
-        fl.close()
+        prcs_fl.close()
         self.update_ui()
-        self.print("Los procesos se han cargado correctamente", "success")
+        self.print("Los procesos se han cargado correctamente", "green")
 
-    def add_ps_to_list(self, ps):
+    def add_prcs(self, prcs: str):
         #
         # Añade a la lista un proceso
         #
         ALL_NUM_RGX = r"^\d+$"
-        ps_values = list(map(lambda value: int(value) if re.search(ALL_NUM_RGX, value) else value, ps.split()))
+        prcs_values = list(map(lambda value: int(value) if re.search(ALL_NUM_RGX, value) else value, prcs.split()))
 
-        if len(ps_values) != 4:
-            raise AppException(AppExceptionTypes.WrongProcessInputFormat, ps_values)
-        if ps_values[2] < 100 or ps_values[2] > Simulation.TOTAL_MEM:
-            raise AppException(AppExceptionTypes.InvalidMemoryAmount, ps_values[2])
-        if not re.search(ALL_NUM_RGX, str(ps_values[1])) or not re.search(ALL_NUM_RGX, str(ps_values[2])) or not re.search(ALL_NUM_RGX, str(ps_values[3])):
-            raise AppException(AppExceptionTypes.WrongDataType)
-        self._processes.append(Process(ps_values[0], ps_values[1], ps_values[2], ps_values[3]))
-        self.processes_list.insert(parent="", index="end", text="", values=ps_values)
+        if len(prcs_values) != 4:
+            raise AppException(AppExceptionTypes.WRONG_PROCESS_INPUT_FORMAT, prcs_values)
+        if not re.search(ALL_NUM_RGX, str(prcs_values[1])) or not re.search(ALL_NUM_RGX, str(prcs_values[2])) or not re.search(ALL_NUM_RGX, str(prcs_values[3])):
+            raise AppException(AppExceptionTypes.WRONG_DATA_TYPE)
+        if prcs_values[2] < self.MIN_MEMORY_VALUE or prcs_values[2] > Simulation.TOTAL_MEM:
+            raise AppException(AppExceptionTypes.INVALID_REQUIRED_MEMORY_AMOUNT, prcs_values[2])
+        self._processes.append(Process(prcs_values[0], prcs_values[1], prcs_values[2], prcs_values[3]))
+        self._prcs_list.insert(parent="", index="end", text="", values=prcs_values)
 
-    def gen_rand_ps(self):
+    def make_rand_prcs(self):
         #
         # Añade a la lista tantos procesos con datos aleatorios como indique el slider
         # Atajo: Ctrl+a
         #
-        if self.btn_rand_processes_list["state"] == "disabled":
+        if self._btn_rand_prcs_list["state"] == "disabled":
             return
-        processes_amount = self.sli_processes_amount.get()
+        prcs_amt = self._sli_prcs_amount.get()
 
-        self.clr_processes_list()
-        for i in range(0, processes_amount):
-            self.add_ps_to_list(f"p{str(i)} {random.randint(1, processes_amount * 3)} {random.randint(100, Simulation.TOTAL_MEM)} {random.randint(1, math.floor(processes_amount / 3))}")
-        self.print(f"Se han cargado {processes_amount} procesos aleatoriamente", "success")
+        self.clr_prcs_list()
+        for i in range(prcs_amt):
+            self.add_prcs(f"p{str(i)} {random.randint(1, prcs_amt * 3)} {random.randint(100, Simulation.TOTAL_MEM)} {random.randint(1, math.floor(math.sqrt(math.pow(prcs_amt, 1.05))))}")
+        self.print(f"Se han creado {prcs_amt} procesos aleatoriamente", "green")
         self.update_ui()
 
     def clr_log(self):
         #
         # Limpia todo el texto del registro (log)
         #
-        self.log.config(state=NORMAL)
-        self.log.delete("1.0", END)
-        self.log.config(state=DISABLED)
+        self._log.config(state=NORMAL)
+        self._log.delete("1.0", END)
+        self._log.config(state=DISABLED)
 
     def is_sim_ready_to_run(self):
-        return len(self._processes) > 3 and self._app_state == State.IDLE
+        return len(self._processes) >= self.MIN_PROCESSES_AMOUNT and self._simulation.is_idle()
 
-    def clr_processes_list(self):
+    def clr_prcs_list(self):
         #
         # Elimina todos los procesos de la lista
         #
-        if len(self.processes_list.get_children()) == 0 or self.btn_clr_processes_list["state"] == "disabled":
+        if len(self._prcs_list.get_children()) == 0 or self._btn_clr_prcs_list["state"] == "disabled":
             return
-        self.processes_list.delete(*self.processes_list.get_children())
-        self.btn_start.config(state=DISABLED)
-        self.print("Todos los procesos eliminados")
+        self._prcs_list.delete(*self._prcs_list.get_children())
         self._processes = []
+        self.update_ui()
+        self.print("Todos los procesos eliminados")
 
-    def print(self, text, tags=None, endl=True):
+    def print(self, text: str, tags: str = None):
         #
         # Imprime por el recuadro de texto (log)
         #
-        self.log.config(state=NORMAL)
-        self.log.insert(END, " " + str(text) + "\n" if endl else "", tags)
-        self.log.yview_moveto(1)
-        self.log.config(state=DISABLED)
+        self._log.config(state=NORMAL)
+        self._log.insert(END, " " + str(text) + "\n", tags)
+        self._log.yview_moveto(1)
+        self._log.config(state=DISABLED)
 
     def run_sim(self):
         #
-        # Guarda en variable el hilo que contiene la funcion de simulación y
-        # la ejecuta
+        # Hilo que ejecuta funcion de simulación
         # Atajo: Intro
         #
-        self._sim_handl_thread = t.Thread(target=self.handle_sim, daemon=True)
-        self._sim_handl_thread.start()
+        sim_handl_thread = Thread(target=self.handle_sim, daemon=True)
+        sim_handl_thread.start()
 
     def handle_sim(self):
         #
@@ -465,115 +533,116 @@ class AppManager(Tk):
         #
         self.print("Algoritmo a usar: " + ("Mejor hueco" if self._algo_opt.get() == Algorithm.MEJ_HUECO.value else "Siguiente hueco"))
         self.print("Lanzando simulación...")
-        self.simulation = Simulation(deepcopy(self._processes), self._algo_opt.get(), self.sli_iter_sec.get(), self.mem_view, self.mem_view_info)
+        self._simulation = Simulation(deepcopy(self._processes), self._algo_opt.get(), self._sli_iter_sec.get(), self._mem_canvas)
         export_txt = ""
         EXPORT_FILENAME = "particiones.txt"
+        self._simulation.set_sim_state(SimState.RUNNING)
 
-        self._app_state = State.RUNNING
-
-        while True:
-            while self.simulation.is_paused() and not self.simulation.is_ended():
-                time.sleep(.2)
-            if self.simulation.is_ended():
-                break
+        try:
+            while True:
+                while self._simulation.is_paused() and not self._simulation.is_ended():
+                    time.sleep(.2)
+                if self._simulation.is_ended():
+                    break
+                self._simulation.step()
+                self.print(self._simulation.get_step_info())
+                if self._ckbtn_export_value.get():
+                    export_txt += self._simulation.get_inst_export() + "\n"
+                self.update_ui()
+                if not self._ckbtn_instant_sim_value.get():
+                    time.sleep(self._simulation.get_step_sec())
+                self._simulation.inc_inst()
+        except:
+            self.print("Error en la simulación")
+            raise AppException(AppExceptionTypes.SIMULATION_ERROR)
+        finally:
+            if not self._simulation.is_ended():
+                self.print("La simulación se ha detenido", "red")
+            else:
+                self.print("La simulación se ha completado exitosamente", "green")
+                if self._ckbtn_export_value.get():
+                    self.print(f"Exportando a {EXPORT_FILENAME}")
+                    with open(EXPORT_FILENAME, "w") as o_fl:
+                        o_fl.write(str(export_txt))
+            self._simulation.clr_mem_canvas()
+            self._simulation = Simulation()
             self.update_ui()
-            self.simulation.step()
-            self.print(self.simulation.get_step_info())
-            if not self._ckbtn_instant_sim_value.get():
-                time.sleep(self.simulation.get_step_sec())
-            if self._ckbtn_export_value.get():
-                export_txt += self.simulation.get_step_export()
-            self.simulation.inc_instant()
 
-        if self.simulation.is_stopped():
-            self.print("La simulación se ha detenido", "warning")
-        else:
-            self.print("La simulación se ha completado exitosamente", "success")
-            if self._ckbtn_export_value.get():
-                self.print(f"Exportando a {EXPORT_FILENAME}")
-                with open(EXPORT_FILENAME, "w") as o_fl:
-                    o_fl.write(str(export_txt))
-        self._app_state = State.IDLE
-        self.simulation = None
-        self.update_ui()
-
-    def pause(self):
+    def pause_sim(self):
         #
         # Pausa la simulación
         # Atajo: Barra espaciadora
         #
-        if self.btn_pause["state"] == "disabled":
+        if self._btn_pause["state"] == "disabled":
             return
-        if self.simulation.is_paused():
-            self._app_state = State.RUNNING
-            self.simulation.set_paused(False)
+        if self._simulation.is_paused():
+            self._simulation.set_sim_state(SimState.RUNNING)
         else:
-            self._app_state = State.PAUSED
-            self.simulation.set_paused(True)
+            self._simulation.set_sim_state(SimState.PAUSED)
         self.update_ui()
 
-    def stop(self):
+    def stop_sim(self):
         #
         # Detiene la simulación
         # Atajo: Intro
         #
-        self.simulation.set_stopped(True)
+        if self._simulation.is_idle():
+            return
+        self._simulation.set_sim_state(SimState.STOPPED)
         self.print("Deteniendo simulación...")
 
     def update_ui(self):
         #
         # Actualizar elementos de la interfaz: ¿se debe poder interactuar con un elemento en este momento?, texto que muestra,...
         #
-        if self._app_state == State.RUNNING:
-            self.btn_start.config(state=DISABLED)
-            self.btn_stop.config(state=NORMAL)
-            self.btn_pause.config(state=NORMAL, text="Pausar")
-            self.btn_read_processes_list.config(state=DISABLED)
-            self.btn_clr_processes_list.config(state=DISABLED)
-            self.btn_rand_processes_list.config(state=DISABLED)
-            self.algo_sel_1.config(state=DISABLED)
-            self.algo_sel_2.config(state=DISABLED)
-            self.sli_iter_sec.config(state=DISABLED)
-            self.ckbtn_instant_sim.config(state=DISABLED)
-            self.ckbtn_export.config(state=DISABLED)
-        elif self._app_state == State.IDLE:
-            self.btn_stop.config(state=DISABLED)
-            self.btn_pause.config(state=DISABLED, text="Pausar")
-            self.btn_read_processes_list.config(state=NORMAL)
-            self.btn_clr_processes_list.config(state=NORMAL)
-            self.btn_rand_processes_list.config(state=NORMAL)
-            self.btn_start.config(state=NORMAL) if len(self._processes) else self.btn_start.config(state=DISABLED)
-            self.algo_sel_1.config(state=NORMAL)
-            self.algo_sel_2.config(state=NORMAL)
-            self.sli_iter_sec.config(state=NORMAL)
-            self.ckbtn_instant_sim.config(state=NORMAL)
-            self.ckbtn_export.config(state=NORMAL)
-            self.mem_view.delete("all")
-            self.mem_view_info.delete("all")
-        elif self._app_state == State.PAUSED:
-            self.btn_start.config(state=DISABLED)
-            self.btn_stop.config(state=NORMAL)
-            self.btn_pause.config(state=NORMAL, text="Reanudar")
-            self.btn_read_processes_list.config(state=DISABLED)
-            self.btn_clr_processes_list.config(state=DISABLED)
-            self.btn_rand_processes_list.config(state=DISABLED)
-            self.algo_sel_1.config(state=DISABLED)
-            self.algo_sel_2.config(state=DISABLED)
-            self.sli_iter_sec.config(state=NORMAL)
-            self.ckbtn_instant_sim.config(state=DISABLED)
-            self.ckbtn_export.config(state=DISABLED)
+        if self._simulation.is_running():
+            self._btn_start.config(state=DISABLED)
+            self._btn_stop.config(state=NORMAL)
+            self._btn_pause.config(state=NORMAL, text="Pausar")
+            self._btn_read_prcs_list.config(state=DISABLED)
+            self._btn_clr_prcs_list.config(state=DISABLED)
+            self._btn_rand_prcs_list.config(state=DISABLED)
+            self._algo_sel_1.config(state=DISABLED)
+            self._algo_sel_2.config(state=DISABLED)
+            self._sli_iter_sec.config(state=DISABLED)
+            self._ckbtn_instant_sim.config(state=DISABLED)
+            self._ckbtn_export.config(state=DISABLED)
+        elif self._simulation.is_idle():
+            self._btn_stop.config(state=DISABLED)
+            self._btn_pause.config(state=DISABLED, text="Pausar")
+            self._btn_read_prcs_list.config(state=NORMAL)
+            self._btn_clr_prcs_list.config(state=NORMAL)
+            self._btn_rand_prcs_list.config(state=NORMAL)
+            self._btn_start.config(state=NORMAL) if len(self._processes) else self._btn_start.config(state=DISABLED)
+            self._algo_sel_1.config(state=NORMAL)
+            self._algo_sel_2.config(state=NORMAL)
+            self._sli_iter_sec.config(state=NORMAL)
+            self._ckbtn_instant_sim.config(state=NORMAL)
+            self._ckbtn_export.config(state=NORMAL)
+        elif self._simulation.is_paused():
+            self._btn_start.config(state=DISABLED)
+            self._btn_stop.config(state=NORMAL)
+            self._btn_pause.config(state=NORMAL, text="Reanudar")
+            self._btn_read_prcs_list.config(state=DISABLED)
+            self._btn_clr_prcs_list.config(state=DISABLED)
+            self._btn_rand_prcs_list.config(state=DISABLED)
+            self._algo_sel_1.config(state=DISABLED)
+            self._algo_sel_2.config(state=DISABLED)
+            self._sli_iter_sec.config(state=NORMAL)
+            self._ckbtn_instant_sim.config(state=DISABLED)
+            self._ckbtn_export.config(state=DISABLED)
 
 
-def set_hotkeys(app):
+def set_hotkeys(app: AppManager):
     #
     # Atajos de teclado
     #
-    app.bind("<space>", lambda event: app.pause())  # Pausar simulación
+    app.bind("<space>", lambda event: app.pause_sim())  # Pausar simulación
     app.bind("<Control-q>", lambda event: app.destroy())  # Salir
-    app.bind("<Control-a>", lambda event: app.gen_rand_ps())  # Llenar tabla con procesos aleatorios
+    app.bind("<Control-a>", lambda event: app.make_rand_prcs())  # Llenar tabla con procesos aleatorios
     app.bind("<Control-l>", lambda event: app.clr_log())  # Limpiar el registro
-    app.bind("<Control-L>", lambda event: app.clr_processes_list())  # Limpiar el listado de procesos (Ctrl+shift+l)
-    app.bind("<Return>", lambda event: app.run_sim() if app.is_sim_ready_to_run() else app.stop() if app.simulation is not None else None)  # Iniciar / Detener simulación
+    app.bind("<Control-L>", lambda event: app.clr_prcs_list())  # Limpiar el listado de procesos (Ctrl+shift+l)
+    app.bind("<Return>", lambda event: app.run_sim() if app.is_sim_ready_to_run() else app.stop_sim() if app._simulation is not None else None)  # Iniciar / Detener simulación
 
 
 def main():

@@ -1,5 +1,5 @@
 # Ejemplo de como introducir procesos. El espacio entre datos debe ser como mínimo un espacio en blanco.
-A              1                     300                  3
-B              2                 2000                 5
-C              3                  400                  4
-D              5                   150 5
+A              1                     300                  2
+B              2                 100                 2
+C              30                  400                  4
+D              50                   150 5
